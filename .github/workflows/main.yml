@@ -1,5 +1,4 @@
 name: Build QEMU for WebAssembly
-
 on:
   push:
     branches: [ main, master, develop ]
