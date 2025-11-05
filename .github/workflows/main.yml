@@ -278,10 +278,7 @@ jobs:
           cd qemu/output/${{matrix.target}}
           
           cat > qemu-wrapper.js << 'EOF'
-/*
- * QEMU WebAssembly Wrapper
- * Provides a simplified interface for running QEMU in the browser
- */
+
 
 class QEMUJS {
   constructor() {
