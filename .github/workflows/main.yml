@@ -182,9 +182,11 @@ jobs:
           # Create build directory
           mkdir -p android-build-${{matrix.target}}
           cd android-build-${{matrix.target}}
-          
-          # Android-specific configuration
-          ../configure \
+          # Ensure Emscripten environment is sourced (if available) and configure with emconfigure
+          source $HOME/emsdk/emsdk_env.sh 2>/dev/null || true
+
+          # Android-specific configuration (use emconfigure so Emscripten compilers are used at configure time)
+          emconfigure ../configure \
             ${{matrix.config_flags}} \
             --disable-werror \
             --disable-docs \
@@ -245,7 +247,8 @@ jobs:
           BUILD_JOBS=$(nproc)
           
           # Build with Emscripten
-          emmake make -j${BUILD_JOBS} \
+          # Build the explicit JS/WASM target so emscripten produces qemu-system-<arch>.js/.wasm
+          emmake make -j${BUILD_JOBS} qemu-system-${{matrix.arch}}.js \
             CFLAGS="-s WASM=1 -s EXPORTED_RUNTIME_METHODS=['cwrap', 'ccall', 'UTF8ToString', 'stringToUTF8', 'lengthBytesUTF8', 'Pointer_stringify'] -s EXPORTED_FUNCTIONS=['_main', '_malloc', '_free', '_android_emulator_init', '_android_emulator_step'] -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4GB -s INITIAL_MEMORY=512MB -s WASM_ASYNC_COMPILATION=0 -s FORCE_FILESYSTEM=1 -s NODEJS_CATCH_EXIT=0 -s NODEJS_CATCH_REJECTION=0 -s EXIT_RUNTIME=1 -s GL_ENABLE_GET_PROC_ADDRESS=0 -s WEBGL2_BACK_COMPATIBILITY_CHECK=0 -O3 -flto --llvm-lto 3 -DANDROID_GOLDFISH -DQEMU_GOLDFISH_FRAMEBUFFER" \
             LDFLAGS="-s WASM=1 -s EXPORTED_RUNTIME_METHODS=['cwrap', 'ccall', 'UTF8ToString', 'stringToUTF8', 'lengthBytesUTF8', 'Pointer_stringify'] -s EXPORTED_FUNCTIONS=['_main', '_malloc', '_free', '_android_emulator_init', '_android_emulator_step'] -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4GB -s INITIAL_MEMORY=512MB -s WASM_ASYNC_COMPILATION=0 -s FORCE_FILESYSTEM=1 -s NODEJS_CATCH_EXIT=0 -s NODEJS_CATCH_REJECTION=0 -s EXIT_RUNTIME=1 -s GL_ENABLE_GET_PROC_ADDRESS=0 -s WEBGL2_BACK_COMPATIBILITY_CHECK=0 -O3 -flto --llvm-lto 3"
 
