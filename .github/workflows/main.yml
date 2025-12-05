@@ -18,9 +18,7 @@ jobs:
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          # Export paths properly using KEY=VALUE format
           echo "EMSDK=$GITHUB_WORKSPACE/emsdk" >> $GITHUB_ENV
-          echo "EMSDK_NODE=$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin" >> $GITHUB_ENV
           echo "EMSCRIPTEN=$GITHUB_WORKSPACE/emsdk/upstream/emscripten" >> $GITHUB_ENV
           echo "PATH=$GITHUB_WORKSPACE/emsdk:$GITHUB_WORKSPACE/emsdk/upstream/emscripten:$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin:$PATH" >> $GITHUB_ENV
 
@@ -32,22 +30,23 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool git python3 python3-pip
-          pip3 install meson ninja
+          sudo apt install -y ninja-build pkg-config libglib2.0-dev libpixman-1-dev autoconf automake libtool python3 python3-pip
+          pip3 install --user meson
 
       - name: Clone QEMU
         run: |
-          git clone https://github.com/qemu/qemu.git --depth=1
+          git clone --depth=1 https://github.com/qemu/qemu.git
           cd qemu
           git submodule update --init --recursive
 
-      - name: Build QEMU WebAssembly
+      - name: Build QEMU WebAssembly (32-bit x86)
         run: |
           source "$EMSDK/emsdk_env.sh"
           cd qemu
-          mkdir build && cd build
+          mkdir -p build && cd build
+
           emconfigure ../configure \
-            --target-list=i386-softmmu \
+            --target-list=x86-softmmu \
             --disable-user \
             --disable-tools \
             --disable-docs \
@@ -64,19 +63,22 @@ jobs:
             --disable-curl \
             --disable-vnc \
             --disable-werror \
+            --disable-pie \
             --static \
-            --extra-cflags="-s USE_PTHREADS=0 -Wno-deprecated-declarations -O2 -g"
+            --extra-cflags="-O2 -g -Wno-deprecated-declarations" \
+            --extra-cxxflags="-O2 -g"
+
           emmake make -j$(nproc)
 
-      - name: Copy Build Output
+      - name: Copy Artifacts
         run: |
           mkdir -p dist
-          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
-          cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
+          cp qemu/build/qemu-system-x86 dist/qemu-system-x86.wasm || true
+          cp qemu/build/qemu-system-x86.*.js dist/ || true
           ls -la dist/
 
-      - name: Upload WASM Build
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qemu-wasm-build
-          path: dist
+          name: qemu-wasm-x86
+          path: dist/
