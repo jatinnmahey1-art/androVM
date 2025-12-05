@@ -16,7 +16,7 @@ jobs:
         uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
-          update: true  # Fetch latest tools
+          update: true
 
       - name: Verify Emscripten
         run: emcc -v
@@ -29,30 +29,32 @@ jobs:
 
       - name: Clone QEMU (Full Clone)
         run: |
-          git clone https://github.com/qemu/qemu.git  # No --depth=1 for reliability
+          git clone https://github.com/qemu/qemu.git
           cd qemu
           git submodule update --init --recursive
 
-      - name: Verify QEMU Files (Debug)
+      - name: List Available Targets (Debug)
         run: |
-          ls -la qemu/
-          ls -la qemu/configure || echo "configure MISSING!"
-          cd qemu && ../configure --help | head -20 || echo "configure failed to run"
+          cd qemu
+          ../configure --help | grep -A 20 "target-list"
 
-      - name: Build QEMU WebAssembly (Autoconf)
+      - name: Build QEMU WebAssembly
         run: |
-          source /home/runner/.emscripten/emsdk_env.sh || source "$EMSDK/emsdk_env.sh"  # Fallback for setup-emsdk
+          source /home/runner/.emscripten/emsdk_env.sh
           cd qemu
           mkdir -p build && cd build
 
           emconfigure ../configure \
-            --target-list=i386-softmmu \
-            # For 64-bit: --target-list=x86_64-softmmu (uncomment and adjust copy below)
-            --disable-user \
+            # Option 1: 64-bit x86 (recommended; faster TCI)
+            --target-list=x86_64-softmmu \
+            # Option 2: 32-bit x86 (uncomment for original; comment out above)
+            # --target-list=i386-softmmu \
+            --enable-tcg-interpreter \
             --disable-tools \
             --disable-docs \
             --disable-plugins \
             --disable-system \
+            --disable-hvf \
             --disable-cocoa \
             --disable-gtk \
             --disable-vte \
@@ -66,40 +68,20 @@ jobs:
             --disable-werror \
             --disable-pie \
             --disable-pixman \
-            --extra-cflags="-O2 -g -Wno-deprecated-declarations -s USE_PTHREADS=0" \
-            --extra-cxxflags="-O2 -g"
+            --extra-cflags="-O2 -g -Wno-deprecated-declarations -s USE_PTHREADS=1 -s PROXY_TO_PTHREAD=1 -s ASYNCIFY=1" \
+            --extra-cxxflags="-O2 -g -s USE_PTHREADS=1 -s PROXY_TO_PTHREAD=1 -s ASYNCIFY=1"
 
           emmake make -j$(nproc)
-
-      # Fallback: Pure Meson Build (uncomment if autoconf fails)
-      # - name: Build QEMU WebAssembly (Pure Meson)
-      #   if: failure()
-      #   run: |
-      #     source /home/runner/.emscripten/emsdk_env.sh || source "$EMSDK/emsdk_env.sh"
-      #     cd qemu
-      #     mkdir -p build && cd build
-      #
-      #     emconfigure meson setup .. \
-      #       --cross-file $EMSCRIPTEN/cmake/Modules/Platform/Emscripten.cross \
-      #       --buildtype=release \
-      #       -Dtarget_list=i386-softmmu \
-      #       -Ddocs=disabled \
-      #       -Dplugins=disabled \
-      #       -Duser=false \
-      #       -Dtools=false \
-      #       -Dpixman=disabled
-      #
-      #     emmake ninja -j$(nproc)
 
       - name: Copy Artifacts
         run: |
           mkdir -p dist
-          # For 32-bit
-          cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
-          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
-          # For 64-bit (uncomment if using x86_64-softmmu)
-          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.wasm dist/qemu.wasm || true
-          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
+          # For 64-bit (x86_64-softmmu)
+          cp qemu/build/x86_64-softmmu/qemu-system-x86_64.wasm dist/qemu.wasm || true
+          cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
+          # For 32-bit (i386-softmmu; uncomment if using Option 2)
+          # cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
+          # cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
           ls -la dist/
 
       - name: Upload Artifact
