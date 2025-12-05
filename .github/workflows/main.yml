@@ -30,8 +30,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev libpixman-1-dev autoconf automake libtool python3 python3-pip
-          pip3 install --user meson
+          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool python3 python3-pip git
+          pip3 install --user meson>=1.5.0
 
       - name: Clone QEMU
         run: |
@@ -39,14 +39,23 @@ jobs:
           cd qemu
           git submodule update --init --recursive
 
-      - name: Build QEMU WebAssembly (32-bit x86)
+      - name: List Available Targets (Debug)
+        run: |
+          source "$EMSDK/emsdk_env.sh"
+          cd qemu
+          ../configure --help | grep -A 20 "target-list"
+
+      - name: Build QEMU WebAssembly
         run: |
           source "$EMSDK/emsdk_env.sh"
           cd qemu
           mkdir -p build && cd build
 
           emconfigure ../configure \
-            --target-list=x86-softmmu \
+            # Option 1: 32-bit x86 (original intent)
+            --target-list=i386-softmmu \
+            # Option 2: 64-bit x86 (uncomment below for faster WASM; comment out above)
+            # --target-list=x86_64-softmmu \
             --disable-user \
             --disable-tools \
             --disable-docs \
@@ -64,7 +73,7 @@ jobs:
             --disable-vnc \
             --disable-werror \
             --disable-pie \
-            --static \
+            --disable-pixman \
             --extra-cflags="-O2 -g -Wno-deprecated-declarations" \
             --extra-cxxflags="-O2 -g"
 
@@ -73,12 +82,16 @@ jobs:
       - name: Copy Artifacts
         run: |
           mkdir -p dist
-          cp qemu/build/qemu-system-x86 dist/qemu-system-x86.wasm || true
-          cp qemu/build/qemu-system-x86.*.js dist/ || true
+          # For 32-bit (i386-softmmu)
+          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
+          cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
+          # For 64-bit (x86_64-softmmu; uncomment if using Option 2)
+          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
+          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.wasm dist/qemu.wasm || true
           ls -la dist/
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qemu-wasm-x86
+          name: qemu-wasm-build
           path: dist/
