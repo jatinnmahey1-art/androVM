@@ -1,91 +1,180 @@
-name: Build QEMU WebAssembly
+name: CI
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main ]
+  pull_request:
 
 jobs:
-  build:
+  eslint:
+    name: eslint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+      - name: Run eslint
+        run: sudo npm install -g eslint; make eslint
+
+  test:
+    runs-on: ubuntu-latest
+    name: Build and test
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          version: latest
-          update: true
+          fetch-depth: 0
+          filter: tree:0
 
-      - name: Verify Emscripten
-        run: emcc -v
+      - name: Setup Node.js version
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          check-latest: true
+          registry-url: 'https://registry.npmjs.org'
 
-      - name: Install Dependencies
+      - name: Setup toolchain
         run: |
-          sudo apt update
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev libpixman-1-dev autoconf automake libtool make git python3 python3-pip
-          pip3 install --user meson>=1.5.0
+          rustup toolchain install stable --profile minimal
+          rustup target add wasm32-unknown-unknown
+          rustup component add rustfmt
 
-      - name: Clone QEMU (Full Clone)
+      - name: Install APT packages
         run: |
-          git clone https://github.com/qemu/qemu.git
-          cd qemu
-          git submodule update --init --recursive
+          sudo apt-get update -y
+          sudo apt-get install nasm gdb qemu-system-x86 libc6-dev-i386 -y
 
-      - name: List Available Targets (Debug)
-        run: |
-          cd qemu
-          ../configure --help | grep -A 20 "target-list"
+      - name: Build all-debug
+        run: make all-debug
 
-      - name: Build QEMU WebAssembly
-        run: |
-          source /home/runner/.emscripten/emsdk_env.sh
-          cd qemu
-          mkdir -p build && cd build
+      - name: Build all
+        run: make all
 
-          emconfigure ../configure \
-            # Option 1: 64-bit x86 (recommended; faster TCI)
-            --target-list=x86_64-softmmu \
-            # Option 2: 32-bit x86 (uncomment for original; comment out above)
-            # --target-list=i386-softmmu \
-            --enable-tcg-interpreter \
-            --disable-tools \
-            --disable-docs \
-            --disable-plugins \
-            --disable-system \
-            --disable-hvf \
-            --disable-cocoa \
-            --disable-gtk \
-            --disable-vte \
-            --disable-opengl \
-            --disable-virglrenderer \
-            --disable-spice \
-            --disable-libiscsi \
-            --disable-libnfs \
-            --disable-curl \
-            --disable-vnc \
-            --disable-werror \
-            --disable-pie \
-            --disable-pixman \
-            --extra-cflags="-O2 -g -Wno-deprecated-declarations -s USE_PTHREADS=1 -s PROXY_TO_PTHREAD=1 -s ASYNCIFY=1" \
-            --extra-cxxflags="-O2 -g -s USE_PTHREADS=1 -s PROXY_TO_PTHREAD=1 -s ASYNCIFY=1"
+      - name: Build fallback
+        run: make build/v86-fallback.wasm
 
-          emmake make -j$(nproc)
+      - name: rustfmt check
+        run: make rustfmt
 
-      - name: Copy Artifacts
-        run: |
-          mkdir -p dist
-          # For 64-bit (x86_64-softmmu)
-          cp qemu/build/x86_64-softmmu/qemu-system-x86_64.wasm dist/qemu.wasm || true
-          cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
-          # For 32-bit (i386-softmmu; uncomment if using Option 2)
-          # cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
-          # cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
-          ls -la dist/
+      - name: Fetch kvm-unit-test cache
+        uses: actions/cache@v4
+        id: cache-kvm-unit-test
+        with:
+          path: tests/kvm-unit-tests/
+          key: ${{ runner.os }}-kvm-unit-test
 
-      - name: Upload Artifact
+      - name: Build kvm-unit-test
+        if: steps.cache-kvm-unit-test.outputs.cache-hit != 'true'
+        run: (cd tests/kvm-unit-tests && ./configure && make x86/realmode.flat)
+
+      - name: Run kvm-unit-test
+        run: tests/kvm-unit-tests/run.mjs tests/kvm-unit-tests/x86/realmode.flat
+
+      - name: Fetch namsmtests cache
+        uses: actions/cache@v4
+        id: cache-nasmtests
+        with:
+          path: tests/nasm/build/
+          key: ${{ runner.os }}-nasmtests
+
+      - name: Run nasmtests
+        run: MAX_PARALLEL_TESTS=1 make nasmtests
+
+      - name: Run nasmtests-force-jit
+        run: MAX_PARALLEL_TESTS=1 make nasmtests-force-jit
+
+      - name: Run rust-test
+        run: make rust-test
+
+      - name: Fetch image cache
+        uses: actions/cache@v4
+        id: cache-images
+        with:
+          path: images/
+          key: ${{ runner.os }}-images-v2
+
+      - name: Download uncached images
+        if: steps.cache-images.outputs.cache-hit != 'true'
+        run: mkdir -p images && curl --compressed --output-dir images --remote-name-all https://i.copy.sh/{linux.iso,linux3.iso,linux4.iso,buildroot-bzimage68.bin,TinyCore-11.0.iso,oberon.img,msdos.img,openbsd-floppy.img,kolibri.img,windows101.img,os8.img,freedos722.img,mobius-fd-release5.img,msdos622.img}
+
+      - name: Run api-tests
+        run: make api-tests
+
+      - name: Run qemutests
+        run: make qemutests
+
+      - name: Run qemutests-release
+        run: make qemutests-release
+
+      - name: Run jitpagingtests
+        run: make jitpagingtests
+
+      - name: Run integration tests
+        run: MAX_PARALLEL_TESTS=1 make tests
+
+      - name: Run devices tests
+        run: make devices-test
+
+      - name: Run expect tests
+        run: make expect-tests
+
+      - name: Update package.json version
+        run: make update-package-json-version
+
+      - name: Upload the artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qemu-wasm-build
-          path: dist/
+          name: v86
+          path: |
+            package.json
+            LICENSE
+            Readme.md
+            build/libv86*.js
+            build/libv86*.js.map
+            build/v86*.wasm
+            build/*.mjs
+
+  upload:
+    name: Upload release
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/master'
+
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: Delete old release and tag
+        uses: dev-drprasad/delete-tag-and-release@v1.0.1
+        with:
+          delete_release: true
+          tag_name: latest
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: v86
+
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Release to GitHub
+        uses: ncipollo/release-action@v1
+        with:
+          name: Latest Release
+          tag: latest
+          commit: master
+          body: ${{ github.event.head_commit.message }}
+          artifacts: "build/libv86*.js,build/libv86*.js.map,build/*.mjs,build/v86*.wasm"
+          prerelease: true
+
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
