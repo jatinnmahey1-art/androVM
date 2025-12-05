@@ -13,43 +13,56 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Emscripten
+      - name: Install Emscripten SDK
         run: |
           git clone https://github.com/emscripten-core/emsdk.git
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          echo "source $GITHUB_WORKSPACE/emsdk/emsdk_env.sh" >> $GITHUB_ENV
+          # export paths properly using KEY=VALUE format
+          echo "EMSDK=$GITHUB_WORKSPACE/emsdk" >> $GITHUB_ENV
+          echo "EMSDK_NODE=$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin" >> $GITHUB_ENV
+          echo "EMSCRIPTEN=$GITHUB_WORKSPACE/emsdk/upstream/emscripten" >> $GITHUB_ENV
+          echo "PATH=$GITHUB_WORKSPACE/emsdk:$GITHUB_WORKSPACE/emsdk/upstream/emscripten:$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Install Build Tools
+      - name: Load Emscripten Environment
         run: |
-          sudo apt update -y
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev
+          source "$EMSDK/emsdk_env.sh"
+          emcc -v
 
-      - name: Build QEMU (WebAssembly)
+      - name: Install Dependencies
         run: |
-          source $GITHUB_ENV
+          sudo apt update
+          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool
+
+      - name: Clone QEMU
+        run: |
           git clone https://github.com/qemu/qemu.git --depth=1
+          cd qemu
+          git submodule update --init --recursive
+
+      - name: Build QEMU WebAssembly
+        run: |
+          source "$EMSDK/emsdk_env.sh"
           cd qemu
           mkdir build
           cd build
           emcmake ../configure \
             --target-list=i386-softmmu \
+            --disable-user \
             --disable-tools \
             --disable-docs \
-            --disable-user \
             --disable-plugins
           emmake make -j$(nproc)
 
-      - name: Copy WASM Build
+      - name: Copy Build Output
         run: |
           mkdir -p dist
-          cp qemu/build/i386-softmmu/qemu-system-i386 dist/qemu.js || true
+          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
           cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
 
-      - name: Upload WASM QEMU
+      - name: Upload WASM Build
         uses: actions/upload-artifact@v4
         with:
           name: qemu-wasm-build
-          path: dist/
-          retention-days: 60
+          path: dist
