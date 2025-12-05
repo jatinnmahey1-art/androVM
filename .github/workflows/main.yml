@@ -12,50 +12,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Emscripten SDK
-        run: |
-          git clone https://github.com/emscripten-core/emsdk.git
-          cd emsdk
-          ./emsdk install latest
-          ./emsdk activate latest
-          echo "EMSDK=$GITHUB_WORKSPACE/emsdk" >> $GITHUB_ENV
-          echo "EMSCRIPTEN=$GITHUB_WORKSPACE/emsdk/upstream/emscripten" >> $GITHUB_ENV
-          echo "PATH=$GITHUB_WORKSPACE/emsdk:$GITHUB_WORKSPACE/emsdk/upstream/emscripten:$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin:$PATH" >> $GITHUB_ENV
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+          update: true  # Fetch latest tools
 
-      - name: Load Emscripten Environment
-        run: |
-          source "$EMSDK/emsdk_env.sh"
-          emcc -v
+      - name: Verify Emscripten
+        run: emcc -v
 
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool python3 python3-pip git
+          sudo apt install -y ninja-build pkg-config libglib2.0-dev libpixman-1-dev autoconf automake libtool make git python3 python3-pip
           pip3 install --user meson>=1.5.0
 
-      - name: Clone QEMU
+      - name: Clone QEMU (Full Clone)
         run: |
-          git clone --depth=1 https://github.com/qemu/qemu.git
+          git clone https://github.com/qemu/qemu.git  # No --depth=1 for reliability
           cd qemu
           git submodule update --init --recursive
 
-      - name: List Available Targets (Debug)
+      - name: Verify QEMU Files (Debug)
         run: |
-          source "$EMSDK/emsdk_env.sh"
-          cd qemu
-          ../configure --help | grep -A 20 "target-list"
+          ls -la qemu/
+          ls -la qemu/configure || echo "configure MISSING!"
+          cd qemu && ../configure --help | head -20 || echo "configure failed to run"
 
-      - name: Build QEMU WebAssembly
+      - name: Build QEMU WebAssembly (Autoconf)
         run: |
-          source "$EMSDK/emsdk_env.sh"
+          source /home/runner/.emscripten/emsdk_env.sh || source "$EMSDK/emsdk_env.sh"  # Fallback for setup-emsdk
           cd qemu
           mkdir -p build && cd build
 
           emconfigure ../configure \
-            # Option 1: 32-bit x86 (original intent)
             --target-list=i386-softmmu \
-            # Option 2: 64-bit x86 (uncomment below for faster WASM; comment out above)
-            # --target-list=x86_64-softmmu \
+            # For 64-bit: --target-list=x86_64-softmmu (uncomment and adjust copy below)
             --disable-user \
             --disable-tools \
             --disable-docs \
@@ -74,20 +66,40 @@ jobs:
             --disable-werror \
             --disable-pie \
             --disable-pixman \
-            --extra-cflags="-O2 -g -Wno-deprecated-declarations" \
+            --extra-cflags="-O2 -g -Wno-deprecated-declarations -s USE_PTHREADS=0" \
             --extra-cxxflags="-O2 -g"
 
           emmake make -j$(nproc)
 
+      # Fallback: Pure Meson Build (uncomment if autoconf fails)
+      # - name: Build QEMU WebAssembly (Pure Meson)
+      #   if: failure()
+      #   run: |
+      #     source /home/runner/.emscripten/emsdk_env.sh || source "$EMSDK/emsdk_env.sh"
+      #     cd qemu
+      #     mkdir -p build && cd build
+      #
+      #     emconfigure meson setup .. \
+      #       --cross-file $EMSCRIPTEN/cmake/Modules/Platform/Emscripten.cross \
+      #       --buildtype=release \
+      #       -Dtarget_list=i386-softmmu \
+      #       -Ddocs=disabled \
+      #       -Dplugins=disabled \
+      #       -Duser=false \
+      #       -Dtools=false \
+      #       -Dpixman=disabled
+      #
+      #     emmake ninja -j$(nproc)
+
       - name: Copy Artifacts
         run: |
           mkdir -p dist
-          # For 32-bit (i386-softmmu)
-          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
+          # For 32-bit
           cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
-          # For 64-bit (x86_64-softmmu; uncomment if using Option 2)
-          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
+          cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
+          # For 64-bit (uncomment if using x86_64-softmmu)
           # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.wasm dist/qemu.wasm || true
+          # cp qemu/build/x86_64-softmmu/qemu-system-x86_64.js dist/qemu.js || true
           ls -la dist/
 
       - name: Upload Artifact
