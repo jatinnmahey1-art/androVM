@@ -8,7 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,7 +18,7 @@ jobs:
           cd emsdk
           ./emsdk install latest
           ./emsdk activate latest
-          # export paths properly using KEY=VALUE format
+          # Export paths properly using KEY=VALUE format
           echo "EMSDK=$GITHUB_WORKSPACE/emsdk" >> $GITHUB_ENV
           echo "EMSDK_NODE=$GITHUB_WORKSPACE/emsdk/node/22.16.0_64bit/bin" >> $GITHUB_ENV
           echo "EMSCRIPTEN=$GITHUB_WORKSPACE/emsdk/upstream/emscripten" >> $GITHUB_ENV
@@ -33,7 +32,8 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool
+          sudo apt install -y ninja-build pkg-config libglib2.0-dev autoconf automake libtool git python3 python3-pip
+          pip3 install meson ninja
 
       - name: Clone QEMU
         run: |
@@ -45,14 +45,27 @@ jobs:
         run: |
           source "$EMSDK/emsdk_env.sh"
           cd qemu
-          mkdir build
-          cd build
-          emcmake ../configure \
+          mkdir build && cd build
+          emconfigure ../configure \
             --target-list=i386-softmmu \
             --disable-user \
             --disable-tools \
             --disable-docs \
-            --disable-plugins
+            --disable-plugins \
+            --disable-system \
+            --disable-cocoa \
+            --disable-gtk \
+            --disable-vte \
+            --disable-opengl \
+            --disable-virglrenderer \
+            --disable-spice \
+            --disable-libiscsi \
+            --disable-libnfs \
+            --disable-curl \
+            --disable-vnc \
+            --disable-werror \
+            --static \
+            --extra-cflags="-s USE_PTHREADS=0 -Wno-deprecated-declarations -O2 -g"
           emmake make -j$(nproc)
 
       - name: Copy Build Output
@@ -60,6 +73,7 @@ jobs:
           mkdir -p dist
           cp qemu/build/i386-softmmu/qemu-system-i386.js dist/qemu.js || true
           cp qemu/build/i386-softmmu/qemu-system-i386.wasm dist/qemu.wasm || true
+          ls -la dist/
 
       - name: Upload WASM Build
         uses: actions/upload-artifact@v4
